@@ -1,0 +1,85 @@
+services:
+  nginx:
+    build:
+      context: .
+      dockerfile: ./docker/nginx/Dockerfile
+      args:
+        DOMAIN: ${DOMAIN}
+    environment:
+      DOMAIN: ${DOMAIN}
+    restart: unless-stopped
+    volumes:
+      - storage:/var/www/storage:ro
+      - static:/var/www/static:ro
+      - certbot_data:/var/www/certbot:ro
+      - letsencrypt_certs:/etc/letsencrypt:ro
+      - ./public/storage:/var/www/public/storage:ro
+    networks:
+      - appnet
+    ports:
+      - "${NGINX_PORT:-80}:80"
+      - 443:443
+    depends_on:
+      - app
+
+  app:
+    build:
+      context: .
+      dockerfile: ./docker/app/Dockerfile
+      args:
+        PHP_VERSION: 8.2
+    restart: unless-stopped
+    volumes:
+      - storage:/var/www/storage
+      - static:/var/www/static
+      - ./public/storage:/var/www/public/storage
+    env_file:
+      - .env
+    networks:
+      - appnet
+    healthcheck:
+      disable: true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: mysql:8.3
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-3306}:3306"
+    environment:
+      - MYSQL_DATABASE=${DB_DATABASE}
+      - MYSQL_USER=${DB_USERNAME}
+      - MYSQL_PASSWORD=${DB_PASSWORD}
+      - MYSQL_ROOT_PASSWORD=${DB_ROOT_PASSWORD}
+    volumes:
+      - db_data:/var/lib/mysql
+    networks:
+      - appnet
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  certbot:
+    image: certbot/certbot
+    volumes: 
+      - certbot_data:/var/www/html
+      - letsencrypt_certs:/etc/letsencrypt
+    command: certonly --webroot --webroot-path=/var/www/html --force-renewal --no-eff-email --email ${EMAIL} -d ${DOMAIN} --agree-tos
+    depends_on:
+      - nginx
+    profiles:
+      - ssl
+
+networks:
+  appnet:
+
+volumes:
+  db_data:
+  storage:
+  static:
+  certbot_data:
+  letsencrypt_certs:
